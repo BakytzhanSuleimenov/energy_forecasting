@@ -1,0 +1,37 @@
+project: energy_forecasting
+logging: logging.conf
+mlflow_tracking_uri: http://127.0.0.1:5000
+
+data:
+  sequence_length: 72
+  forecast_horizon: 24
+  test_ratio: 0.2
+  validation_ratio: 0.1
+
+models:
+  random_forest:
+    n_estimators: 200
+    max_depth: 20
+    min_samples_split: 5
+    min_samples_leaf: 2
+
+  xgboost:
+    n_estimators: 200
+    max_depth: 8
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+
+  dnn:
+    hidden_layers: [128, 64, 32]
+    dropout_rate: 0.2
+    learning_rate: 0.001
+    epochs: 100
+    batch_size: 64
+
+  lstm:
+    units: [64, 32]
+    dropout_rate: 0.2
+    learning_rate: 0.001
+    epochs: 100
+    batch_size: 64
