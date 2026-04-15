@@ -2,10 +2,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.common.data import (
     create_sequences,
     create_tabular_features,
+    fetch_real_data,
     generate_synthetic_data,
     prepare_features,
     split_data,
@@ -93,3 +95,9 @@ def test_split_data():
     assert len(X_test) == 20
     assert len(X_val) == 10
     assert len(X_train) == 70
+
+
+def test_fetch_real_data_requires_api_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("ENTSOE_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="ENTSOE API key required"):
+        fetch_real_data(output_path=str(tmp_path / "real.csv"), api_key=None)

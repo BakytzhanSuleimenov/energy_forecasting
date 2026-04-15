@@ -5,6 +5,7 @@ description = "Energy Price Forecasting with ML Model Benchmarking"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "entsoe-py>=0.7.11",
     "keras>=3.7.0",
     "matplotlib>=3.9.0",
     "mlflow>=2.18.0",
@@ -13,6 +14,7 @@ dependencies = [
     "plotly>=5.24.0",
     "pylint>=3.3.2",
     "pytest>=8.3.4",
+    "requests>=2.32.0",
     "ruff>=0.11.0",
     "scikit-learn>=1.6.1,<1.7.0",
     "streamlit>=1.40.0",

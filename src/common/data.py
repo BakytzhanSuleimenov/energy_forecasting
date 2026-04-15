@@ -87,6 +87,219 @@ def generate_synthetic_data(
     return df
 
 
+def fetch_weather_data(start_date: str, end_date: str) -> pd.Series:
+    """Fetch hourly 2m temperature for Dublin from Open-Meteo (free, no API key)."""
+    import requests as req
+
+    url = (
+        "https://archive-api.open-meteo.com/v1/archive"
+        f"?latitude=53.35&longitude=-6.26"
+        f"&hourly=temperature_2m"
+        f"&start_date={start_date}&end_date={end_date}"
+        "&timezone=Europe%2FDublin"
+    )
+    logger.info("Fetching Dublin temperature from Open-Meteo (%s to %s)...", start_date, end_date)
+    resp = req.get(url, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    times = pd.to_datetime(data["hourly"]["time"]).tz_localize("Europe/Dublin").tz_convert("UTC")
+    return pd.Series(data["hourly"]["temperature_2m"], index=times, name="temperature")
+
+
+def fetch_real_data(
+    start_date: str = "2022-01-01",
+    end_date: str = "2024-12-31",
+    output_path: str = "data/energy_prices.csv",
+    api_key: str | None = None,
+) -> pd.DataFrame:
+    """
+    Fetch real Ireland electricity market data and save to CSV.
+
+    Sources:
+    - ENTSOE Transparency Platform (entsoe-py): day-ahead prices, system load,
+      wind + solar generation for the IE bidding zone.
+    - Open-Meteo Historical Weather API: hourly temperature for Dublin (free, no key).
+    - Synthetic gas price proxy correlated with electricity price (no public IE TTF API).
+
+    Args:
+        start_date: First date to fetch (YYYY-MM-DD, inclusive).
+        end_date:   Last date to fetch  (YYYY-MM-DD, inclusive).
+        output_path: Destination CSV path.
+        api_key: ENTSOE REST API key.  Falls back to ENTSOE_API_KEY env var.
+
+    Returns:
+        DataFrame with the same schema as generate_synthetic_data().
+
+    Raises:
+        ValueError: If no ENTSOE API key is available.
+    """
+    import os
+
+    try:
+        from entsoe import EntsoePandasClient
+    except ImportError as exc:
+        raise ImportError("entsoe-py is not installed. Run: uv add entsoe-py") from exc
+
+    api_key = api_key or os.environ.get("ENTSOE_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "ENTSOE API key required. Set the ENTSOE_API_KEY environment variable.\n"
+            "Register at https://transparency.entsoe.eu and email transparency@entsoe.eu "
+            "with subject 'Restful API access'."
+        )
+
+    client = EntsoePandasClient(api_key=api_key)
+    country = "IE_SEM"
+    start = pd.Timestamp(start_date, tz="Europe/Dublin")
+    end = pd.Timestamp(end_date, tz="Europe/Dublin") + pd.Timedelta(days=1)
+
+    prices: pd.Series | None = None
+    logger.info("Fetching ENTSOE day-ahead prices for Ireland (%s – %s)...", start_date, end_date)
+    try:
+        prices = client.query_day_ahead_prices(country, start=start, end=end).tz_convert("UTC")
+        prices.name = "price"
+        logger.info("Fetched %d price records from ENTSOE.", len(prices))
+    except Exception as exc:
+        logger.warning("Could not fetch day-ahead prices (%s) – will use synthetic price proxy.", exc)
+
+    load_series: pd.Series | None = None
+    try:
+        logger.info("Fetching ENTSOE actual load for Ireland...")
+        raw_load = client.query_load(country, start=start, end=end)
+        raw_load = raw_load.tz_convert("UTC")
+        load_series = raw_load.iloc[:, 0] if isinstance(raw_load, pd.DataFrame) else raw_load
+        load_series.name = "demand"
+    except Exception as exc:
+        logger.warning("Could not fetch load data (%s) – using synthetic proxy.", exc)
+
+    wind_series: pd.Series | None = None
+    solar_series: pd.Series | None = None
+    try:
+        logger.info("Fetching ENTSOE actual generation for Ireland...")
+        gen = client.query_generation(country, start=start, end=end).tz_convert("UTC")
+        wind_cols = [c for c in gen.columns if "Wind" in str(c)]
+        solar_cols = [c for c in gen.columns if "Solar" in str(c)]
+        if wind_cols:
+            wind_series = gen[wind_cols].sum(axis=1)
+            wind_series.name = "wind_generation"
+        if solar_cols:
+            solar_series = gen[solar_cols].sum(axis=1)
+            solar_series.name = "solar_generation"
+    except Exception as exc:
+        logger.warning("Could not fetch generation data (%s) – trying wind/solar forecast.", exc)
+        try:
+            ws = client.query_wind_and_solar_forecast(country, start=start, end=end).tz_convert("UTC")
+            w_cols = [c for c in ws.columns if "Wind" in str(c)]
+            s_cols = [c for c in ws.columns if "Solar" in str(c)]
+            if w_cols:
+                wind_series = ws[w_cols[0]]
+                wind_series.name = "wind_generation"
+            if s_cols:
+                solar_series = ws[s_cols[0]]
+                solar_series.name = "solar_generation"
+        except Exception as exc2:
+            logger.warning("Could not fetch wind/solar forecast (%s) – using synthetic proxy.", exc2)
+
+    temperature_series = fetch_weather_data(start_date, end_date)
+
+    hourly_index = pd.date_range(
+        start=pd.Timestamp(start_date, tz="UTC"),
+        end=pd.Timestamp(end_date, tz="UTC") + pd.Timedelta(days=1) - pd.Timedelta(hours=1),
+        freq="h",
+    )
+
+    if prices is not None:
+        prices_aligned = prices.copy()
+        prices_aligned.index = prices_aligned.index.round("h")
+        df = pd.DataFrame({"price": prices_aligned.reindex(hourly_index)})
+    else:
+        df = pd.DataFrame(index=hourly_index)
+    df.index = df.index.round("h")
+
+    for series in [load_series, wind_series, solar_series, temperature_series]:
+        if series is not None:
+            series.index = series.index.round("h")
+            df[series.name] = series.reindex(df.index)
+
+    n = len(df)
+    rng = np.random.default_rng(42)
+    t = np.arange(n)
+    hours = df.index.hour.values
+    dow = df.index.dayofweek.values
+    months = df.index.month.values
+
+    if "demand" not in df.columns or df["demand"].isna().all():
+        logger.info("Using synthetic proxy for demand (Ireland ~3–4 GW mean).")
+        df["demand"] = np.round(
+            3500
+            + 500 * np.sin(2 * np.pi * (hours - 8) / 24)
+            + 300 * np.where(dow >= 5, -1, 1)
+            + 2000 * np.sin(2 * np.pi * t / (365.25 * 24))
+            + rng.normal(0, 100, n),
+            2,
+        )
+
+    if "wind_generation" not in df.columns or df["wind_generation"].isna().all():
+        logger.info("Using synthetic proxy for wind generation.")
+        df["wind_generation"] = np.round(
+            np.maximum(1500 + 1000 * np.abs(np.sin(2 * np.pi * t / (7 * 24))) + rng.normal(0, 200, n), 0), 2
+        )
+
+    if "solar_generation" not in df.columns or df["solar_generation"].isna().all():
+        logger.info("Using synthetic proxy for solar generation.")
+        df["solar_generation"] = np.round(
+            np.maximum(
+                200 * np.sin(np.pi * np.clip((hours - 6) / 12, 0, 1))
+                * (0.5 + 0.5 * np.sin(2 * np.pi * (months - 1) / 12)),
+                0,
+            ),
+            2,
+        )
+
+    if "temperature" not in df.columns or df["temperature"].isna().all():
+        logger.info("Using synthetic proxy for temperature.")
+        df["temperature"] = np.round(
+            10 + 7 * np.sin(2 * np.pi * t / (365.25 * 24) - np.pi / 2) + rng.normal(0, 2, n), 2
+        )
+
+    if "price" not in df.columns or df["price"].isna().all():
+        logger.info("Using synthetic proxy for electricity price (IE ~€60-120/MWh).")
+        df["price"] = np.round(
+            np.maximum(
+                70
+                + 30 * np.sin(2 * np.pi * (hours - 8) / 24)
+                + 20 * np.sin(2 * np.pi * t / (365.25 * 24))
+                + rng.normal(0, 15, n),
+                0.0,
+            ),
+            2,
+        )
+
+    price_vals = df["price"].fillna(df["price"].median()).values
+    gas = (
+        30.0
+        + 10 * np.sin(2 * np.pi * t / (365.25 * 24) + np.pi)
+        + rng.normal(0, 2, n)
+        + 0.1 * (price_vals - price_vals.mean())
+    )
+    df["gas_price"] = np.round(np.maximum(gas, 5.0), 2)
+
+    df["timestamp"] = df.index
+    df["hour"] = df.index.hour
+    df["day_of_week"] = df.index.dayofweek
+    df["month"] = df.index.month
+    df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+
+    df = df.dropna(subset=["price"])
+    df = df.ffill().bfill()
+    df = df.reset_index(drop=True)
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.info("Saved real Ireland dataset with %d samples -> %s", len(df), output_path)
+    return df
+
+
 def load_data(data_path="data/energy_prices.csv"):
     if not Path(data_path).exists():
         logger.warning("Dataset not found at %s, generating synthetic data...", data_path)
