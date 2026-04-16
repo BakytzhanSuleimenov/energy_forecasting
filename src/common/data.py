@@ -96,13 +96,13 @@ def fetch_weather_data(start_date: str, end_date: str) -> pd.Series:
         f"?latitude=53.35&longitude=-6.26"
         f"&hourly=temperature_2m"
         f"&start_date={start_date}&end_date={end_date}"
-        "&timezone=Europe%2FDublin"
+        "&timezone=UTC"
     )
     logger.info("Fetching Dublin temperature from Open-Meteo (%s to %s)...", start_date, end_date)
     resp = req.get(url, timeout=60)
     resp.raise_for_status()
     data = resp.json()
-    times = pd.to_datetime(data["hourly"]["time"]).tz_localize("Europe/Dublin").tz_convert("UTC")
+    times = pd.to_datetime(data["hourly"]["time"]).tz_localize("UTC")
     return pd.Series(data["hourly"]["temperature_2m"], index=times, name="temperature")
 
 
@@ -208,18 +208,19 @@ def fetch_real_data(
         freq="h",
     )
 
+    def _to_hourly(s: pd.Series) -> pd.Series:
+        """Resample any series to clean hourly UTC, handling sub-hourly resolution and DST dupes."""
+        s = s[~s.index.duplicated(keep="first")]
+        return s.resample("h").mean().reindex(hourly_index)
+
     if prices is not None:
-        prices_aligned = prices.copy()
-        prices_aligned.index = prices_aligned.index.round("h")
-        df = pd.DataFrame({"price": prices_aligned.reindex(hourly_index)})
+        df = pd.DataFrame({"price": _to_hourly(prices)})
     else:
         df = pd.DataFrame(index=hourly_index)
-    df.index = df.index.round("h")
 
     for series in [load_series, wind_series, solar_series, temperature_series]:
         if series is not None:
-            series.index = series.index.round("h")
-            df[series.name] = series.reindex(df.index)
+            df[series.name] = _to_hourly(series)
 
     n = len(df)
     rng = np.random.default_rng(42)
