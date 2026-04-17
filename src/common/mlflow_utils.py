@@ -96,23 +96,22 @@ def _log_model_artifact(model_obj, model_name: str) -> None:
     try:
         import mlflow
 
+        uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+        if uri.startswith(("http://", "https://")):
+            mlflow.set_tag("model_type", model_name)
+            logger.info(
+                "MLflow: skipping artifact upload for HTTP backend (metrics/params logged)"
+            )
+            return
+
         inner = getattr(model_obj, "model", None)
         if inner is None:
             return
-        registered_name = f"energy-forecasting-{model_name.lower().replace('_', '-')}"
         if model_name in ("random_forest", "xgboost"):
-            mlflow.sklearn.log_model(
-                inner,
-                name="model",
-                registered_model_name=registered_name,
-            )
+            mlflow.sklearn.log_model(inner, name="model")
         else:
-            mlflow.tensorflow.log_model(
-                inner,
-                name="model",
-                registered_model_name=registered_name,
-            )
-        logger.info("MLflow: model '%s' logged and registered", registered_name)
+            mlflow.tensorflow.log_model(inner, name="model")
+        logger.info("MLflow: model artifact for '%s' logged", model_name)
     except Exception as exc:
         logger.warning("MLflow model artifact logging failed (non-fatal): %s", exc)
 
