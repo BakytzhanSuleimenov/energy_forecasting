@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import logging
 import logging.config
@@ -17,6 +18,12 @@ from src.common.data import (
     split_data,
 )
 from src.common.metrics import compute_metrics, compute_metrics_per_horizon
+from src.common.mlflow_utils import (
+    is_mlflow_enabled,
+    log_training_run,
+    promote_best_to_staging,
+    setup_experiment,
+)
 from src.models.dnn import DNNModel
 from src.models.lstm import LSTMModel
 from src.models.random_forest import RandomForestModel
@@ -72,6 +79,12 @@ def train_single_model(model_name, config, data_scaled, target_scaled, seq_len, 
     for k, v in overall_metrics.items():
         logger.info("  %s: %s", k, v)
 
+    log_training_run(
+        model, model_name, config,
+        seq_len, horizon, test_ratio, val_ratio,
+        overall_metrics, horizon_metrics,
+    )
+
     return {
         "model_name": model_name,
         "overall_metrics": overall_metrics,
@@ -98,6 +111,8 @@ def main():
     test_ratio = data_config.get("test_ratio", 0.2)
     val_ratio = data_config.get("validation_ratio", 0.1)
 
+    setup_experiment("energy-forecasting")
+
     logger.info("Loading energy price data...")
     df = load_data()
     data_scaled, target_scaled, scaler_X, scaler_y, feature_cols = prepare_features(
@@ -112,10 +127,16 @@ def main():
         if model_name not in MODEL_REGISTRY:
             logger.error("Unknown model: %s. Available: %s", model_name, list(MODEL_REGISTRY.keys()))
             continue
-        result = train_single_model(
-            model_name, config, data_scaled, target_scaled,
-            seq_len, horizon, test_ratio, val_ratio,
-        )
+        if is_mlflow_enabled():
+            import mlflow
+            run_ctx = mlflow.start_run(run_name=model_name)
+        else:
+            run_ctx = contextlib.nullcontext()
+        with run_ctx:
+            result = train_single_model(
+                model_name, config, data_scaled, target_scaled,
+                seq_len, horizon, test_ratio, val_ratio,
+            )
         results.append(result)
 
     results_dir = Path("results")
@@ -141,6 +162,8 @@ def main():
         json.dump(serializable_results, f, indent=2)
 
     logger.info("Results saved to results/benchmark_results.json")
+
+    promote_best_to_staging(results)
 
     logger.info("\n" + "=" * 70)
     logger.info("BENCHMARK SUMMARY")

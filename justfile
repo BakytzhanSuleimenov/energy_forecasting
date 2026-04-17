@@ -48,6 +48,11 @@ default:
 @mlflow:
     uv run mlflow server --host 127.0.0.1 --port 5000
 
+# Open MLflow tracking UI (local SQLite store)
+[group('setup')]
+@mlflow-ui:
+    uv run mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+
 # Display versions of required dependencies
 [group('setup')]
 @dependencies:
