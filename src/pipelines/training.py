@@ -24,6 +24,7 @@ from src.common.mlflow_utils import (
     promote_best_to_staging,
     setup_experiment,
 )
+from src.inference.artifacts import save_inference_artifacts
 from src.models.dnn import DNNModel
 from src.models.lstm import LSTMModel
 from src.models.random_forest import RandomForestModel
@@ -95,6 +96,7 @@ def train_single_model(model_name, config, data_scaled, target_scaled, seq_len, 
             model.get_training_history()
             if hasattr(model, "get_training_history") else None
         ),
+        "model_obj": model,
     }
 
 
@@ -162,6 +164,19 @@ def main():
         json.dump(serializable_results, f, indent=2)
 
     logger.info("Results saved to results/benchmark_results.json")
+
+    if results:
+        best_result = min(results, key=lambda result: result["overall_metrics"]["RMSE"])
+        artifacts_dir = save_inference_artifacts(
+            best_result["model_obj"],
+            best_result["model_name"],
+            feature_cols,
+            scaler_X,
+            scaler_y,
+            seq_len,
+            horizon,
+        )
+        logger.info("Inference artifacts saved to %s", artifacts_dir)
 
     promote_best_to_staging(results)
 
