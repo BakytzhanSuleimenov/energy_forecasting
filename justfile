@@ -23,6 +23,26 @@ default:
 @generate-data:
     uv run python src/pipelines/generate_data.py
 
+# Show expected schema for saved inference artifacts
+[group('inference')]
+@predict-schema:
+    uv run python src/pipelines/predict.py --schema
+
+# Run prediction using saved inference artifacts and local dataset
+[group('inference')]
+@predict:
+    uv run python src/pipelines/predict.py
+
+# Run lightweight monitoring reports for saved inference artifacts
+[group('inference')]
+@monitor:
+    uv run python src/pipelines/monitoring.py
+
+# Serve the saved inference artifacts over FastAPI
+[group('inference')]
+@serve:
+    uv run uvicorn src.serving.app:app --host 127.0.0.1 --port 8000
+
 # Train all models and benchmark them
 [group('training')]
 @train:

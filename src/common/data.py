@@ -310,12 +310,15 @@ def load_data(data_path="data/energy_prices.csv"):
     return df
 
 
+FEATURE_COLUMNS = [
+    "price", "temperature", "demand", "wind_generation",
+    "solar_generation", "gas_price", "hour", "day_of_week",
+    "month", "is_weekend",
+]
+
+
 def prepare_features(df, sequence_length=72, forecast_horizon=24):
-    feature_cols = [
-        "price", "temperature", "demand", "wind_generation",
-        "solar_generation", "gas_price", "hour", "day_of_week",
-        "month", "is_weekend",
-    ]
+    feature_cols = FEATURE_COLUMNS
     target_col = "price"
 
     data = df[feature_cols].values

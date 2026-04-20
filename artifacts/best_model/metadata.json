@@ -1,0 +1,20 @@
+{
+  "model_name": "xgboost",
+  "feature_cols": [
+    "price",
+    "temperature",
+    "demand",
+    "wind_generation",
+    "solar_generation",
+    "gas_price",
+    "hour",
+    "day_of_week",
+    "month",
+    "is_weekend"
+  ],
+  "sequence_length": 72,
+  "forecast_horizon": 24,
+  "model_filename": "model.joblib",
+  "scaler_X_filename": "scaler_X.joblib",
+  "scaler_y_filename": "scaler_y.joblib"
+}
