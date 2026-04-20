@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -8,10 +10,20 @@ class PredictionRequest(BaseModel):
     history: list[dict[str, object]]
 
 
+class BatchPredictionRequest(BaseModel):
+    histories: list[list[dict[str, object]]]
+
+
 class PredictionResponse(BaseModel):
     model_name: str
     forecast_horizon: int
     prediction: list[float]
+
+
+class BatchPredictionResponse(BaseModel):
+    model_name: str
+    forecast_horizon: int
+    predictions: list[list[float]]
 
 
 def create_app(artifacts_dir="artifacts/best_model"):
@@ -56,7 +68,22 @@ def create_app(artifacts_dir="artifacts/best_model"):
             prediction=prediction,
         )
 
+    @app.post("/predict/batch", response_model=BatchPredictionResponse)
+    def predict_batch(request: BatchPredictionRequest):
+        forecaster = get_forecaster()
+        predictions = []
+        try:
+            for history in request.histories:
+                predictions.append(forecaster.predict(history))
+        except SchemaValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return BatchPredictionResponse(
+            model_name=forecaster.model_name,
+            forecast_horizon=forecaster.forecast_horizon,
+            predictions=predictions,
+        )
+
     return app
 
 
-app = create_app()
+app = create_app(artifacts_dir=os.getenv("ARTIFACTS_DIR", "artifacts/best_model"))

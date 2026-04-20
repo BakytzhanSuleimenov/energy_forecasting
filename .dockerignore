@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.vscode/
+.git/
+.gitignore
+.env
+mlartifacts/
+results/
+notebooks/
+archive.7z
+mlflow.db
