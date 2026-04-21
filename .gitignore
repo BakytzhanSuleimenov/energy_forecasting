@@ -16,7 +16,7 @@ results/
 *.egg-info/
 dist/
 build/
-archive.7z
 mlflow.db
-.abacusai
-.vscode
+.vscode/
+.abacusai/
+.abacusai/config.json
