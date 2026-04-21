@@ -100,9 +100,9 @@ def _log_model_artifact(model_obj, model_name: str) -> None:
         if inner is None:
             return
         if model_name in ("random_forest", "xgboost"):
-            mlflow.sklearn.log_model(inner, name="model")
+            mlflow.sklearn.log_model(inner, name="model", pip_requirements=[])
         else:
-            mlflow.tensorflow.log_model(inner, name="model")
+            mlflow.tensorflow.log_model(inner, name="model", pip_requirements=[])
         mlflow.set_tag("model_type", model_name)
         logger.info("MLflow: model artifact for '%s' logged", model_name)
     except Exception as exc:
@@ -147,12 +147,14 @@ def register_best_model(results: list) -> None:
                     inner,
                     name="model",
                     registered_model_name=registered_name,
+                    pip_requirements=[],
                 )
             else:
                 mlflow.tensorflow.log_model(
                     inner,
                     name="model",
                     registered_model_name=registered_name,
+                    pip_requirements=[],
                 )
             mlflow.set_tag("selection", "best_by_rmse")
             logger.info(
