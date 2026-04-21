@@ -9,7 +9,6 @@ mlartifacts/
 .env
 .venv
 .venv*
-uv.lock
 data/*.csv
 data/*.json
 models/
