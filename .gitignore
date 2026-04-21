@@ -11,11 +11,12 @@ mlartifacts/
 .venv*
 data/*.csv
 data/*.json
-models/
+/models/
 results/
 *.egg-info/
 dist/
 build/
 archive.7z
 mlflow.db
+.abacusai
 .vscode
