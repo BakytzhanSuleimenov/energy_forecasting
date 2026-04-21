@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(uv *)",
-      "Bash(git *)",
-      "Bash(try { Get-ChildItem -Force src | Format-Table -AutoSize | Out-String -Width 4096 } catch { echo \"Error: $($_.Exception.M…)"
-    ]
-  }
-}
