@@ -45,6 +45,61 @@ def test_log_training_run_noop_without_uri(monkeypatch):
     )
 
 
+def test_register_best_model_noop_without_uri(monkeypatch):
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    from src.common.mlflow_utils import register_best_model
+
+    register_best_model([
+        {
+            "model_name": "random_forest",
+            "model_config": {"n_estimators": 10},
+            "overall_metrics": {"RMSE": 1.0},
+            "model_obj": None,
+        }
+    ])
+
+
+def test_register_best_model_logs_hyperparameters(monkeypatch, tmp_path):
+    tracking_uri = tmp_path.joinpath("mlflow.db").as_uri().replace("file:///", "sqlite:///")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", tracking_uri)
+
+    from src.common.mlflow_utils import register_best_model, setup_experiment
+    from src.models.random_forest import RandomForestModel
+
+    setup_experiment("test-experiment")
+
+    model = RandomForestModel(config={"n_estimators": 5, "max_depth": 3})
+    model.build(input_shape=4, output_shape=2)
+
+    register_best_model([
+        {
+            "model_name": "random_forest",
+            "model_config": {"n_estimators": 5, "max_depth": 3},
+            "overall_metrics": {"RMSE": 0.8, "MAE": 0.4},
+            "model_obj": model,
+        },
+        {
+            "model_name": "xgboost",
+            "model_config": {"n_estimators": 20},
+            "overall_metrics": {"RMSE": 1.2},
+            "model_obj": None,
+        },
+    ])
+
+    import mlflow
+
+    client = mlflow.MlflowClient(tracking_uri=tracking_uri)
+    experiment = client.get_experiment_by_name("test-experiment")
+    runs = client.search_runs([experiment.experiment_id], order_by=["attributes.start_time DESC"], max_results=1)
+    assert runs
+    run_data = runs[0].data
+    assert run_data.params["model_name"] == "random_forest"
+    assert run_data.params["registered_model_name"] == "energy-forecasting-random-forest"
+    assert run_data.params["hp_n_estimators"] == "5"
+    assert run_data.params["hp_max_depth"] == "3"
+    assert float(run_data.metrics["RMSE"]) == pytest.approx(0.8)
+
+
 def test_promote_best_to_staging_noop_without_uri(monkeypatch):
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     from src.common.mlflow_utils import promote_best_to_staging

@@ -96,14 +96,6 @@ def _log_model_artifact(model_obj, model_name: str) -> None:
     try:
         import mlflow
 
-        uri = os.environ.get("MLFLOW_TRACKING_URI", "")
-        if uri.startswith(("http://", "https://")):
-            mlflow.set_tag("model_type", model_name)
-            logger.info(
-                "MLflow: skipping artifact upload for HTTP backend (metrics/params logged)"
-            )
-            return
-
         inner = getattr(model_obj, "model", None)
         if inner is None:
             return
@@ -111,9 +103,65 @@ def _log_model_artifact(model_obj, model_name: str) -> None:
             mlflow.sklearn.log_model(inner, name="model")
         else:
             mlflow.tensorflow.log_model(inner, name="model")
+        mlflow.set_tag("model_type", model_name)
         logger.info("MLflow: model artifact for '%s' logged", model_name)
     except Exception as exc:
         logger.warning("MLflow model artifact logging failed (non-fatal): %s", exc)
+
+
+def register_best_model(results: list) -> None:
+    if not is_mlflow_enabled() or not results:
+        return
+    try:
+        import mlflow
+
+        if mlflow.active_run() is not None:
+            logger.warning("MLflow best-model registration skipped: active run detected")
+            return
+
+        best = min(results, key=lambda r: r["overall_metrics"].get("RMSE", float("inf")))
+        best_name = best["model_name"]
+        registered_name = f"energy-forecasting-{best_name.lower().replace('_', '-')}"
+        model_obj = best.get("model_obj")
+        model_config = best.get("model_config", {})
+        overall_metrics = best.get("overall_metrics", {})
+
+        with mlflow.start_run(run_name=f"best-{best_name}"):
+            mlflow.log_param("model_name", best_name)
+            mlflow.log_param("registered_model_name", registered_name)
+            for key, value in model_config.items():
+                if isinstance(value, (int, float, str, bool)):
+                    mlflow.log_param(f"hp_{key}", value)
+            for metric_name, metric_value in overall_metrics.items():
+                try:
+                    mlflow.log_metric(metric_name, float(metric_value))
+                except (TypeError, ValueError):
+                    continue
+
+            inner = getattr(model_obj, "model", None)
+            if inner is None:
+                logger.warning("MLflow best-model registration skipped: no inner model found")
+                return
+            if best_name in ("random_forest", "xgboost"):
+                mlflow.sklearn.log_model(
+                    inner,
+                    name="model",
+                    registered_model_name=registered_name,
+                )
+            else:
+                mlflow.tensorflow.log_model(
+                    inner,
+                    name="model",
+                    registered_model_name=registered_name,
+                )
+            mlflow.set_tag("selection", "best_by_rmse")
+            logger.info(
+                "MLflow: registered best model '%s' as '%s'",
+                best_name,
+                registered_name,
+            )
+    except Exception as exc:
+        logger.warning("MLflow best-model registration failed (non-fatal): %s", exc)
 
 
 def promote_best_to_staging(results: list) -> None:

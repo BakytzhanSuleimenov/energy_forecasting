@@ -3,8 +3,6 @@ import time
 
 os.environ.setdefault("KERAS_BACKEND", "tensorflow")
 
-import numpy as np
-
 from src.models.base import BaseModel
 
 

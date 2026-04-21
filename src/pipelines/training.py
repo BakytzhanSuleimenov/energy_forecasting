@@ -22,6 +22,7 @@ from src.common.mlflow_utils import (
     is_mlflow_enabled,
     log_training_run,
     promote_best_to_staging,
+    register_best_model,
     setup_experiment,
 )
 from src.inference.artifacts import save_inference_artifacts
@@ -88,6 +89,7 @@ def train_single_model(model_name, config, data_scaled, target_scaled, seq_len, 
 
     return {
         "model_name": model_name,
+        "model_config": model_config,
         "overall_metrics": overall_metrics,
         "horizon_metrics": horizon_metrics,
         "predictions": y_pred.tolist(),
@@ -177,6 +179,7 @@ def main():
             horizon,
         )
         logger.info("Inference artifacts saved to %s", artifacts_dir)
+        register_best_model(results)
 
     promote_best_to_staging(results)
 
