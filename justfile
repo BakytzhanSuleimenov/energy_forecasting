@@ -12,6 +12,15 @@ default:
 @lint:
     uv run ruff check src/ tests/
 
+@typecheck:
+    uv run mypy src/
+
+@test-cov:
+    uv run pytest --cov=src --cov-report=term-missing
+
+@security-audit:
+    uv run pip-audit
+
 @format:
     uv run ruff format src/ tests/
 
