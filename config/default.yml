@@ -35,3 +35,45 @@ models:
     learning_rate: 0.001
     epochs: 100
     batch_size: 64
+
+experiments:
+  default_template: baseline
+  templates:
+    baseline:
+      models: [random_forest, xgboost, dnn, lstm]
+      tuning_enabled: false
+      model_overrides: {}
+    fast_iteration:
+      models: [random_forest, xgboost]
+      tuning_enabled: true
+      model_overrides:
+        random_forest:
+          n_estimators: 120
+        xgboost:
+          n_estimators: 120
+
+tuning:
+  enabled: false
+  max_trials_per_model: 8
+  grids:
+    random_forest:
+      n_estimators: [120, 200, 280]
+      max_depth: [12, 20]
+      min_samples_split: [2, 5]
+    xgboost:
+      n_estimators: [120, 200]
+      max_depth: [6, 8]
+      learning_rate: [0.03, 0.05]
+      subsample: [0.8, 1.0]
+    dnn:
+      hidden_layers: [[128, 64, 32], [256, 128, 64]]
+      dropout_rate: [0.2, 0.3]
+      learning_rate: [0.001, 0.0005]
+      batch_size: [64]
+      epochs: [80, 120]
+    lstm:
+      units: [[64, 32], [96, 48]]
+      dropout_rate: [0.2, 0.3]
+      learning_rate: [0.001, 0.0005]
+      batch_size: [64]
+      epochs: [80, 120]

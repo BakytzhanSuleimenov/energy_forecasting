@@ -58,9 +58,15 @@ default:
 
 [group('training')]
 @train:
-    uv run python src/pipelines/training.py
+    uv run python src/pipelines/training.py --template baseline
 @train-model model:
-    uv run python src/pipelines/training.py --model {{model}}
+    uv run python src/pipelines/training.py --template baseline --model {{model}}
+@train-template template:
+    uv run python src/pipelines/training.py --template {{template}}
+@train-tuned template="fast_iteration" max_trials="8":
+    uv run python src/pipelines/training.py --template {{template}} --tuning true --max-trials {{max_trials}}
+@train-metaflow template="baseline" tuning="" max_trials="0":
+    uv run python src/pipelines/training.py run --template {{template}} --tuning {{tuning}} --max-trials {{max_trials}}
 
 [group('benchmarking')]
 @benchmark:
