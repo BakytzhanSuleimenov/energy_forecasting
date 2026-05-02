@@ -19,6 +19,7 @@ def generate_synthetic_data(
     freq="h",
     seed=42,
     output_path="data/energy_prices.csv",
+    include_legacy_columns=True,
 ):
     rng = np.random.default_rng(seed=seed)
     periods = n_days * 24
@@ -51,17 +52,17 @@ def generate_synthetic_data(
     demand += 2000 * np.sin(2 * np.pi * np.arange(periods) / (365.25 * 24))
     demand += rng.normal(0, 500, periods)
 
-    wind_generation = 2000 + 1500 * np.abs(np.sin(2 * np.pi * np.arange(periods) / (7 * 24)))
-    wind_generation += rng.normal(0, 300, periods)
-    wind_generation = np.maximum(wind_generation, 0)
+    wind_speed = 6 + 3 * np.abs(np.sin(2 * np.pi * np.arange(periods) / (7 * 24)))
+    wind_speed += rng.normal(0, 1.2, periods)
+    wind_speed = np.maximum(wind_speed, 0)
 
-    solar_generation = np.maximum(
-        3000 * np.sin(np.pi * np.clip((hours - 6) / 12, 0, 1)) *
-        (0.5 + 0.5 * np.sin(2 * np.pi * np.arange(periods) / (365.25 * 24))),
+    solar_irradiation = np.maximum(
+        500 * np.sin(np.pi * np.clip((hours - 6) / 12, 0, 1))
+        * (0.5 + 0.5 * np.sin(2 * np.pi * np.arange(periods) / (365.25 * 24))),
         0,
     )
-    solar_generation += rng.normal(0, 100, periods)
-    solar_generation = np.maximum(solar_generation, 0)
+    solar_irradiation += rng.normal(0, 20, periods)
+    solar_irradiation = np.maximum(solar_irradiation, 0)
 
     gas_price = 25 + 5 * np.sin(2 * np.pi * np.arange(periods) / (365.25 * 24))
     gas_price += rng.normal(0, 1, periods)
@@ -72,14 +73,17 @@ def generate_synthetic_data(
         "price": np.round(price, 2),
         "temperature": np.round(temperature, 2),
         "demand": np.round(demand, 2),
-        "wind_generation": np.round(wind_generation, 2),
-        "solar_generation": np.round(solar_generation, 2),
+        "wind_speed": np.round(wind_speed, 2),
+        "solar_irradiation": np.round(solar_irradiation, 2),
         "gas_price": np.round(gas_price, 2),
         "hour": hours,
         "day_of_week": day_of_week,
         "month": month,
         "is_weekend": (day_of_week >= 5).astype(int),
     })
+    if include_legacy_columns:
+        df["wind_generation"] = np.round(df["wind_speed"] * 300, 2)
+        df["solar_generation"] = np.round(df["solar_irradiation"] * 6, 2)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
@@ -87,23 +91,30 @@ def generate_synthetic_data(
     return df
 
 
-def fetch_weather_data(start_date: str, end_date: str) -> pd.Series:
-    """Fetch hourly 2m temperature for Dublin from Open-Meteo (free, no API key)."""
+def fetch_weather_data(start_date: str, end_date: str) -> pd.DataFrame:
     import requests as req
 
     url = (
         "https://archive-api.open-meteo.com/v1/archive"
         f"?latitude=53.35&longitude=-6.26"
-        f"&hourly=temperature_2m"
+        f"&hourly=temperature_2m,wind_speed_10m,shortwave_radiation"
         f"&start_date={start_date}&end_date={end_date}"
         "&timezone=UTC"
     )
-    logger.info("Fetching Dublin temperature from Open-Meteo (%s to %s)...", start_date, end_date)
+    logger.info("Fetching Dublin weather from Open-Meteo (%s to %s)...", start_date, end_date)
     resp = req.get(url, timeout=60)
     resp.raise_for_status()
     data = resp.json()
     times = pd.to_datetime(data["hourly"]["time"]).tz_localize("UTC")
-    return pd.Series(data["hourly"]["temperature_2m"], index=times, name="temperature")
+    weather = pd.DataFrame(
+        {
+            "temperature": data["hourly"].get("temperature_2m", []),
+            "wind_speed": data["hourly"].get("wind_speed_10m", []),
+            "solar_irradiation": data["hourly"].get("shortwave_radiation", []),
+        },
+        index=times,
+    )
+    return weather
 
 
 def fetch_real_data(
@@ -118,7 +129,8 @@ def fetch_real_data(
     Sources:
     - ENTSOE Transparency Platform (entsoe-py): day-ahead prices, system load,
       wind + solar generation for the IE bidding zone.
-    - Open-Meteo Historical Weather API: hourly temperature for Dublin (free, no key).
+    - Open-Meteo Historical Weather API: hourly temperature, wind speed,
+      and shortwave radiation for Dublin (free, no key).
     - Synthetic gas price proxy correlated with electricity price (no public IE TTF API).
 
     Args:
@@ -200,7 +212,7 @@ def fetch_real_data(
         except Exception as exc2:
             logger.warning("Could not fetch wind/solar forecast (%s) – using synthetic proxy.", exc2)
 
-    temperature_series = fetch_weather_data(start_date, end_date)
+    weather_df = fetch_weather_data(start_date, end_date)
 
     hourly_index = pd.date_range(
         start=pd.Timestamp(start_date, tz="UTC"),
@@ -218,7 +230,14 @@ def fetch_real_data(
     else:
         df = pd.DataFrame(index=hourly_index)
 
-    for series in [load_series, wind_series, solar_series, temperature_series]:
+    if weather_df is not None and not weather_df.empty:
+        for weather_col in ["temperature", "wind_speed", "solar_irradiation"]:
+            if weather_col in weather_df.columns:
+                weather_series = weather_df[weather_col]
+                weather_series.name = weather_col
+                df[weather_col] = _to_hourly(weather_series)
+
+    for series in [load_series, wind_series, solar_series]:
         if series is not None:
             df[series.name] = _to_hourly(series)
 
@@ -240,28 +259,37 @@ def fetch_real_data(
             2,
         )
 
-    if "wind_generation" not in df.columns or df["wind_generation"].isna().all():
-        logger.info("Using synthetic proxy for wind generation.")
-        df["wind_generation"] = np.round(
-            np.maximum(1500 + 1000 * np.abs(np.sin(2 * np.pi * t / (7 * 24))) + rng.normal(0, 200, n), 0), 2
-        )
-
-    if "solar_generation" not in df.columns or df["solar_generation"].isna().all():
-        logger.info("Using synthetic proxy for solar generation.")
-        df["solar_generation"] = np.round(
-            np.maximum(
-                200 * np.sin(np.pi * np.clip((hours - 6) / 12, 0, 1))
-                * (0.5 + 0.5 * np.sin(2 * np.pi * (months - 1) / 12)),
-                0,
-            ),
+    if "wind_speed" not in df.columns or df["wind_speed"].isna().all():
+        logger.info("Using synthetic proxy for wind speed.")
+        df["wind_speed"] = np.round(
+            np.maximum(6 + 3 * np.abs(np.sin(2 * np.pi * t / (7 * 24))) + rng.normal(0, 1.2, n), 0),
             2,
         )
+
+    if "solar_irradiation" not in df.columns or df["solar_irradiation"].isna().all():
+        logger.info("Using synthetic proxy for solar irradiation.")
+        df["solar_irradiation"] = np.round(
+            np.maximum(
+                500 * np.sin(np.pi * np.clip((hours - 6) / 12, 0, 1))
+                * (0.5 + 0.5 * np.sin(2 * np.pi * (months - 1) / 12)),
+                0,
+            )
+            + rng.normal(0, 20, n),
+            2,
+        )
+        df["solar_irradiation"] = np.maximum(df["solar_irradiation"], 0)
 
     if "temperature" not in df.columns or df["temperature"].isna().all():
         logger.info("Using synthetic proxy for temperature.")
         df["temperature"] = np.round(
             10 + 7 * np.sin(2 * np.pi * t / (365.25 * 24) - np.pi / 2) + rng.normal(0, 2, n), 2
         )
+
+    if "wind_generation" not in df.columns:
+        df["wind_generation"] = np.round(df["wind_speed"] * 300, 2)
+
+    if "solar_generation" not in df.columns:
+        df["solar_generation"] = np.round(df["solar_irradiation"] * 6, 2)
 
     if "price" not in df.columns or df["price"].isna().all():
         logger.info("Using synthetic proxy for electricity price (IE ~€60-120/MWh).")
@@ -306,19 +334,31 @@ def load_data(data_path="data/energy_prices.csv"):
         logger.warning("Dataset not found at %s, generating synthetic data...", data_path)
         return generate_synthetic_data(output_path=data_path)
     df = pd.read_csv(data_path, parse_dates=["timestamp"])
+    if "wind_speed" not in df.columns and "wind_generation" in df.columns:
+        df["wind_speed"] = np.round(df["wind_generation"] / 300, 2)
+    if "solar_irradiation" not in df.columns and "solar_generation" in df.columns:
+        df["solar_irradiation"] = np.round(df["solar_generation"] / 6, 2)
     logger.info("Loaded dataset with %d samples from %s", len(df), data_path)
     return df
 
 
-FEATURE_COLUMNS = [
-    "price", "temperature", "demand", "wind_generation",
-    "solar_generation", "gas_price", "hour", "day_of_week",
-    "month", "is_weekend",
+BASE_FEATURE_COLUMNS = [
+    "price",
+    "demand",
+    "wind_speed",
+    "solar_irradiation",
+    "gas_price",
+    "hour",
+    "day_of_week",
+    "month",
+    "is_weekend",
 ]
+
+FEATURE_COLUMNS = BASE_FEATURE_COLUMNS
 
 
 def prepare_features(df, sequence_length=72, forecast_horizon=24):
-    feature_cols = FEATURE_COLUMNS
+    feature_cols = BASE_FEATURE_COLUMNS
     target_col = "price"
 
     data = df[feature_cols].values
@@ -357,6 +397,8 @@ def create_tabular_features(data, target, sequence_length=72, forecast_horizon=2
     return np.array(X), np.array(y)
 
 
+
+
 def split_data(X, y, test_ratio=0.2, validation_ratio=0.1):
     n = len(X)
     test_size = int(n * test_ratio)
@@ -371,3 +413,41 @@ def split_data(X, y, test_ratio=0.2, validation_ratio=0.1):
     y_test = y[train_size + val_size :]
 
     return X_train, y_train, X_val, y_val, X_test, y_test
+
+
+def prepare_data_pipeline(
+    start_date="2022-01-01",
+    end_date="2024-12-31",
+    output_path="data/prepared_energy_data.csv",
+    use_real_data=True,
+):
+    if use_real_data:
+        try:
+            return fetch_real_data(start_date=start_date, end_date=end_date, output_path=output_path)
+        except ValueError:
+            logger.warning("ENTSOE key unavailable, falling back to synthetic data for preparation pipeline")
+    return generate_synthetic_data(output_path=output_path)
+
+
+def feature_engineering_pipeline(
+    data_path="data/prepared_energy_data.csv",
+    output_path="data/feature_engineered_energy_data.csv",
+):
+    df = load_data(data_path)
+    required = [
+        "timestamp",
+        "price",
+        "demand",
+        "wind_speed",
+        "solar_irradiation",
+        "gas_price",
+        "hour",
+        "day_of_week",
+        "month",
+        "is_weekend",
+    ]
+    engineered = df[required].copy()
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    engineered.to_csv(output_path, index=False)
+    logger.info("Saved feature-engineered dataset with %d samples -> %s", len(engineered), output_path)
+    return engineered

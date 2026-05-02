@@ -28,6 +28,10 @@ default:
 @generate-data:
     uv run python src/pipelines/generate_data.py
 
+[group('data')]
+@feature-engineer:
+    uv run python src/pipelines/feature_engineering.py
+
 [group('inference')]
 @predict-schema:
     uv run python src/pipelines/predict.py --schema

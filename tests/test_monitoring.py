@@ -12,7 +12,7 @@ def test_monitoring_cli_persists_reports(tmp_path, monkeypatch, capsys):
 
     reference_df.to_csv(reference_csv, index=False)
     current_df = reference_df.copy()
-    current_df["temperature"] = current_df["temperature"] + 25
+    current_df["wind_speed"] = current_df["wind_speed"] + 5
     current_df.to_csv(current_csv, index=False)
 
     monkeypatch.setattr(
@@ -37,7 +37,7 @@ def test_monitoring_cli_persists_reports(tmp_path, monkeypatch, capsys):
     error_report = json.loads((output_dir / "error_report.json").read_text())
 
     assert summary["model_name"] == "random_forest"
-    assert "temperature" in summary["drifted_features"]
+    assert "wind_speed" in summary["drifted_features"]
     assert isinstance(drift_report, list)
     assert error_report["reference"]["window_count"] > 0
     assert (output_dir / "summary.json").exists()

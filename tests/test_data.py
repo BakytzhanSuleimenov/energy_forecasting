@@ -5,10 +5,13 @@ import pandas as pd
 import pytest
 
 from src.common.data import (
+    BASE_FEATURE_COLUMNS,
     create_sequences,
     create_tabular_features,
+    feature_engineering_pipeline,
     fetch_real_data,
     generate_synthetic_data,
+    prepare_data_pipeline,
     prepare_features,
     split_data,
 )
@@ -30,8 +33,9 @@ def test_generate_synthetic_data_columns():
     df = generate_synthetic_data(n_days=7, output_path="data/test_tmp.csv")
     expected_cols = [
         "timestamp", "price", "temperature", "demand",
-        "wind_generation", "solar_generation", "gas_price",
+        "wind_speed", "solar_irradiation", "gas_price",
         "hour", "day_of_week", "month", "is_weekend",
+        "wind_generation", "solar_generation",
     ]
     for col in expected_cols:
         assert col in df.columns
@@ -51,7 +55,7 @@ def test_prepare_features():
     df = generate_synthetic_data(n_days=10, output_path="data/test_tmp3.csv")
     data_scaled, target_scaled, scaler_X, scaler_y, feature_cols = prepare_features(df)
     assert data_scaled.shape[0] == len(df)
-    assert len(feature_cols) == 10
+    assert len(feature_cols) == len(BASE_FEATURE_COLUMNS)
     assert abs(data_scaled.mean(axis=0)).max() < 1.0
     Path("data/test_tmp3.csv").unlink(missing_ok=True)
 
@@ -95,6 +99,34 @@ def test_split_data():
     assert len(X_test) == 20
     assert len(X_val) == 10
     assert len(X_train) == 70
+
+
+
+
+def test_prepare_data_pipeline_and_feature_engineering(tmp_path):
+    prepared_path = tmp_path / "prepared.csv"
+    features_path = tmp_path / "features.csv"
+
+    prepared = prepare_data_pipeline(output_path=str(prepared_path), use_real_data=False)
+    assert prepared_path.exists()
+    assert "wind_speed" in prepared.columns
+    assert "solar_irradiation" in prepared.columns
+
+    engineered = feature_engineering_pipeline(data_path=str(prepared_path), output_path=str(features_path))
+    assert features_path.exists()
+    expected = {
+        "timestamp",
+        "price",
+        "demand",
+        "wind_speed",
+        "solar_irradiation",
+        "gas_price",
+        "hour",
+        "day_of_week",
+        "month",
+        "is_weekend",
+    }
+    assert expected.issubset(set(engineered.columns))
 
 
 def test_fetch_real_data_requires_api_key(monkeypatch, tmp_path):
